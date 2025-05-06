@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DynamoDB Import Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { padding-top: 20px; }
+        .job-card { margin-bottom: 20px; }
+        .progress { height: 25px; }
+        .progress-bar { line-height: 25px; font-weight: bold; }
+        .stats { font-size: 0.9rem; }
+        .refresh-btn { margin-bottom: 20px; }
+        .job-header { display: flex; justify-content: space-between; align-items: center; }
+        .status-badge { font-size: 1rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">DynamoDB Import Monitor</h1>
+        
+        <button id="refresh-btn" class="btn btn-primary refresh-btn">
+            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+            Refresh Data
+        </button>
+        
+        <div id="jobs-container" class="row">
+            <div class="col-12">
+                <div class="alert alert-info">Loading job data...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Job status colors
+        const statusColors = {
+            'running': 'primary',
+            'completed': 'success',
+            'failed': 'danger',
+            'pending': 'warning',
+            'unknown': 'secondary'
+        };
+
+        // Format elapsed time
+        function formatTime(seconds) {
+            if (!seconds) return 'N/A';
+            
+            const hrs = Math.floor(seconds / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            
+            return `${hrs}h ${mins}m ${secs}s`;
+        }
+
+        // Load all jobs
+        function loadJobs() {
+            const spinner = document.querySelector('#refresh-btn .spinner-border');
+            spinner.classList.remove('d-none');
+            
+            fetch('/api/jobs')
+                .then(response => response.json())
+                .then(jobs => {
+                    const container = document.getElementById('jobs-container');
+                    
+                    if (jobs.length === 0) {
+                        container.innerHTML = `
+                            <div class="col-12">
+                                <div class="alert alert-warning">No import jobs found.</div>
+                            </div>
+                        `;
+                        return;
+                    }
+                    
+                    let html = '';
+                    jobs.forEach(job => {
+                        const statusColor = statusColors[job.status] || 'secondary';
+                        const startTime = new Date(job.start_time * 1000).toLocaleString();
+                        
+                        html += `
+                            <div class="col-md-6">
+                                <div class="card job-card">
+                                    <div class="card-header job-header">
+                                        <h5 class="mb-0">${job.job_id}</h5>
+                                        <span class="badge bg-${statusColor} status-badge">${job.status}</span>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="progress mb-3">
+                                            <div class="progress-bar bg-${statusColor}" role="progressbar" 
+                                                style="width: ${job.progress_percentage}%;" 
+                                                aria-valuenow="${job.progress_percentage}" aria-valuemin="0" aria-valuemax="100">
+                                                ${job.progress_percentage}%
+                                            </div>
+                                        </div>
+                                        
+                                        <div class="stats">
+                                            <p><strong>Table:</strong> ${job.table_name}</p>
+                                            <p><strong>Current File:</strong> ${job.current_file || 'N/A'}</p>
+                                            <p><strong>Items:</strong> ${job.processed_items} processed, ${job.failed_items} failed</p>
+                                            <p><strong>Started:</strong> ${startTime}</p>
+                                            <p><strong>Elapsed:</strong> ${formatTime(job.elapsed_time)}</p>
+                                            <p><strong>Est. Completion:</strong> ${job.estimated_completion || 'Unknown'}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    container.innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error fetching jobs:', error);
+                    document.getElementById('jobs-container').innerHTML = `
+                        <div class="col-12">
+                            <div class="alert alert-danger">Error loading job data: ${error.message}</div>
+                        </div>
+                    `;
+                })
+                .finally(() => {
+                    spinner.classList.add('d-none');
+                });
+        }
+
+        // Initial load
+        document.addEventListener('DOMContentLoaded', loadJobs);
+        
+        // Refresh button
+        document.getElementById('refresh-btn').addEventListener('click', loadJobs);
+        
+        // Auto-refresh every 10 seconds
+        setInterval(loadJobs, 10000);
+    </script>
+</body>
+</html>

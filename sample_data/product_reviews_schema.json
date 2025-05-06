@@ -1,0 +1,34 @@
+{
+  "hash_key": "ProductId",
+  "range_key": "ReviewDate",
+  "mapping": {
+    "ProductId": "product_id:S",
+    "ReviewDate": "review_date:S",
+    "CustomerData": {
+      "CustomerId": "customer_id:S",
+      "Name": "customer_name:S",
+      "Email": "customer_email:S"
+    },
+    "ReviewDetails": {
+      "Rating": "rating:N",
+      "Title": "review_title:S",
+      "Content": "review_text:S"
+    },
+    "Verified": "verified:BOOL",
+    "Tags": "tags:SS",
+    "Metrics": {
+      "Helpfulness": "helpfulness:N",
+      "Upvotes": "upvotes:N",
+      "Downvotes": "downvotes:N"
+    },
+    "Images": "image_urls:L:S",
+    "UpdateHistory": {
+      "type": "M",
+      "fields": {
+        "OriginalDate": "original_date:S",
+        "UpdateCount": "update_count:N",
+        "LastModified": "last_modified:S"
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+product_id,review_date,customer_id,customer_name,customer_email,rating,review_title,review_text,verified,tags,helpfulness,upvotes,downvotes,image_urls,original_date,update_count,last_modified
+P12345,2025-01-15,C9876,"Johnson, Mark",markj@example.com,5,"Best purchase ever!","This product exceeded all my expectations. The quality is outstanding.",true,"quality,value,durable",0.89,45,3,"https://example.com/img1.jpg,https://example.com/img2.jpg",2025-01-15,0,2025-01-15
+P12345,2025-01-22,C8765,"Smith, Laura",lauras@example.com,4,"Good but not perfect","Great product overall with minor flaws in the finish.",true,"quality,design",0.72,32,8,"https://example.com/img3.jpg",2025-01-22,1,2025-01-25
+P67890,2025-02-01,C5432,"Thompson, Robert",robertt@example.com,2,"Disappointing","Did not work as advertised. Had to return it.",false,"returns",0.15,3,23,,2025-02-01,0,2025-02-01
+P67890,2025-02-15,C2345,"Davis, Jennifer",jenniferd@example.com,5,"Worth every penny","Absolutely perfect for my needs. Highly recommend!",true,"value,recommend,quality",0.94,67,2,"https://example.com/img4.jpg,https://example.com/img5.jpg,https://example.com/img6.jpg",2025-02-15,2,2025-02-20

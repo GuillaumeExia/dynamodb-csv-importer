@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Project specific
+chunks/
+progress/
+
+# Exclude all CSV files except those in sample_data
+*.csv
+!sample_data/*.csv
+
+# Exclude all JSON schema files except those in sample_data
+*.json
+!sample_data/*.json
+
+# Log and backup files
+*.log
+*.bak
+
+# AWS credentials
+.aws/
+credentials
+config
+
+# Temporary files
+*.tmp
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+.hypothesis/
+.coverage.*
+coverage.xml
+*.cover
