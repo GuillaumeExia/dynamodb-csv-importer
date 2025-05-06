@@ -275,11 +275,11 @@ The MIT License is a permissive license that is short and to the point. It lets 
 
 <div align="center">
   <p>
-    <a href="https://www.windsurf.io" target="_blank">
-      <img src="assets/windsurf-logo.svg" alt="Windsurf Logo" width="120" style="max-width: 100%;">
+    <a href="https://www.windsurf.com" target="_blank">
+      <img src="assets/windsurf-logo.svg" alt="Windsurf Logo" width="80" style="max-width: 100%;">
     </a>
   </p>
   <p>
-    <b>Vibe coded with <a href="https://www.windsurf.io" target="_blank">Windsurf</a></b>
+    <b>Vibe coded with <a href="https://www.windsurf.com" target="_blank">Windsurf</a></b>
   </p>
 </div>
