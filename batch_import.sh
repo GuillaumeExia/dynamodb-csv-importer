@@ -134,6 +134,40 @@ if [ ! -f "$INPUT_FILE" ]; then
     exit 1
 fi
 
+# Validate schema before processing if schema file is provided
+if [ -n "$SCHEMA_FILE" ]; then
+    echo "Validating schema against CSV file before processing..."
+    
+    # Check for Python in virtual environment first
+    PYTHON_PATH="$SCRIPT_DIR/venv/bin/python"
+    if [ -f "$PYTHON_PATH" ]; then
+        PYTHON_EXE="$PYTHON_PATH"
+    else
+        # Fall back to system Python if venv not found
+        PYTHON_EXE="python3"
+    fi
+    
+    VALIDATE_SCRIPT="$SCRIPT_DIR/validate_schema.py"
+    
+    VALIDATE_ARGS=("$VALIDATE_SCRIPT" "--file" "$INPUT_FILE" "--schema" "$SCHEMA_FILE")
+    
+    # Add encoding if specified
+    if [ -n "$ENCODING" ]; then
+        VALIDATE_ARGS+=("--encoding" "$ENCODING")
+    fi
+    
+    # Run validation
+    "$PYTHON_EXE" "${VALIDATE_ARGS[@]}"
+    VALIDATE_EXIT_CODE=$?
+    
+    if [ $VALIDATE_EXIT_CODE -ne 0 ]; then
+        echo "Error: Schema validation failed. Please check your schema and CSV file."
+        exit 1
+    fi
+    
+    echo "Schema validation successful! Proceeding with import..."
+fi
+
 # Tracking file for processed chunks
 TRACKING_FILE="$PROGRESS_DIR/batch_progress.json"
 PROCESSED_CHUNKS=()

@@ -84,6 +84,39 @@ if (-not (Test-Path $InputFile)) {
     exit 1
 }
 
+# Validate schema before processing if schema file is provided
+if ($SchemaFile) {
+    Write-Host "Validating schema against CSV file before processing..."
+    $pythonPath = Join-Path $PSScriptRoot "venv\Scripts\python.exe"
+    if (Test-Path $pythonPath) {
+        $pythonExe = $pythonPath
+    } else {
+        # Fall back to system Python if venv not found
+        $pythonExe = "python"
+    }
+    
+    $validateScript = Join-Path $PSScriptRoot "validate_schema.py"
+    
+    $validateArgs = @(
+        $validateScript,
+        "--file", $InputFile,
+        "--schema", $SchemaFile
+    )
+    
+    if ($Encoding) {
+        $validateArgs += @("--encoding", $Encoding)
+    }
+    
+    $validateProcess = Start-Process -FilePath $pythonExe -ArgumentList $validateArgs -Wait -NoNewWindow -PassThru
+    
+    if ($validateProcess.ExitCode -ne 0) {
+        Write-Error "Schema validation failed. Please check your schema and CSV file."
+        exit 1
+    }
+    
+    Write-Host "Schema validation successful! Proceeding with import..."
+}
+
 # Split the large CSV file into chunks
 Write-Host "Splitting $InputFile into chunks of $ChunkSize rows each..."
 
