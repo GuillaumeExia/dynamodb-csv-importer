@@ -21,13 +21,67 @@ logger = logging.getLogger("schema_validator")
 # Import functions from the main importer
 try:
     from dynamodb_csv_importer import (
-        read_csv_data, 
         transform_row, 
+        type_converter,
         Config
     )
 except ImportError:
     logger.error("Could not import from dynamodb_csv_importer.py. Make sure it's in the same directory.")
     sys.exit(1)
+
+def read_csv_sample(file_path: Path, num_rows: int = 5, encoding: str = "utf-8-sig") -> list:
+    """Read only the header and a few sample rows from a CSV file."""
+    import csv
+    
+    encodings_to_try = [encoding, "latin-1", "cp1252", "iso-8859-1"]
+    last_error = None
+    
+    for enc in encodings_to_try:
+        try:
+            sample_rows = []
+            with open(file_path, 'r', newline='', encoding=enc) as f:
+                reader = csv.DictReader(f)
+                
+                if not reader.fieldnames:
+                    logger.warning("CSV file has no headers")
+                    return []
+                
+                logger.info(f"Successfully opened CSV with encoding: {enc}")
+                logger.info(f"CSV headers: {', '.join(reader.fieldnames)}")
+                
+                # Read only the specified number of rows
+                for i, row in enumerate(reader):
+                    if i >= num_rows:
+                        break
+                    
+                    # Create normalized version of row with clean keys
+                    normalized_row = {}
+                    for key, value in row.items():
+                        # Keep original key-value pair
+                        normalized_row[key] = value
+                        
+                        # Also add a normalized version if different
+                        clean_key = key
+                        # Remove BOM if present
+                        if clean_key.startswith('\ufeff'):
+                            clean_key = clean_key[1:]
+                            normalized_row[clean_key] = value
+                    
+                    sample_rows.append(normalized_row)
+                    
+                return sample_rows
+                
+        except UnicodeDecodeError as e:
+            last_error = e
+            logger.debug(f"Failed to open CSV with encoding {enc}: {e}")
+            continue
+        except Exception as e:
+            logger.error(f"Error reading CSV file: {e}")
+            raise
+    
+    # If we get here, all encodings failed
+    logger.error(f"Error reading CSV file with all attempted encodings. Last error: {last_error}")
+    raise last_error
 
 def validate_schema(csv_file: Path, schema_file: Path, encoding: str = "utf-8-sig") -> bool:
     """
@@ -51,8 +105,9 @@ def validate_schema(csv_file: Path, schema_file: Path, encoding: str = "utf-8-si
             encoding=encoding
         )
         
-        # Read a sample row
-        sample_rows = list(read_csv_data(csv_file, encoding=encoding))
+        # Read just a few sample rows instead of the entire file
+        logger.info("Reading sample rows for validation (this is fast)...")
+        sample_rows = read_csv_sample(csv_file, num_rows=2, encoding=encoding)
         if not sample_rows:
             logger.error("No data found in CSV file")
             return False
