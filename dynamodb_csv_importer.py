@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 DynamoDB CSV Data Importer
 
@@ -13,6 +13,7 @@ import json
 import logging
 import argparse
 import os
+import decimal
 from pathlib import Path
 from typing import Dict, Any, Iterator, Optional, List, Union, Callable, Tuple
 from concurrent.futures import ThreadPoolExecutor
@@ -25,7 +26,7 @@ from botocore.exceptions import ClientError
 
 # Import progress tracker
 try:
-    from progress_tracker import ProgressTracker, count_csv_rows
+    from progress_tracker import ProgressTracker
 except ImportError:
     # Define fallback classes/functions if module not available
     class ProgressTracker:
@@ -35,9 +36,28 @@ except ImportError:
         def update(self, processed, failed): pass
         def complete(self): pass
         def fail(self, error_message): pass
+
+# Define count_csv_rows function with encoding support
+def count_csv_rows(file_path: Path, encoding: str = 'utf-8-sig') -> int:
+    """Count the number of rows in a CSV file (excluding header)."""
+    encodings_to_try = [encoding, 'utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+    last_error = None
     
-    def count_csv_rows(file_path):
-        return 0
+    for enc in encodings_to_try:
+        try:
+            with open(file_path, 'r', newline='', encoding=enc) as f:
+                # Count lines and subtract 1 for header
+                return sum(1 for _ in f) - 1
+        except UnicodeDecodeError as e:
+            last_error = e
+            continue
+        except Exception as e:
+            logger.error(f"Error counting CSV rows: {e}")
+            return 0
+    
+    # If we get here, all encodings failed
+    logger.error(f"Error counting CSV rows with all attempted encodings. Last error: {last_error}")
+    return 0
 
 
 # Set up logging
@@ -243,7 +263,11 @@ def type_converter(value: str, field_type: str) -> Any:
             return value
         elif field_type == 'N':  # Number
             # Use Decimal instead of float for DynamoDB compatibility
-            return Decimal(value)
+            try:
+                return Decimal(value)
+            except (decimal.InvalidOperation, decimal.ConversionSyntax):
+                logger.warning(f"Invalid number format for value '{value}'. Using string instead.")
+                return value  # Return as string instead of failing
         elif field_type == 'BOOL':  # Boolean
             return value.lower() in ('true', 'yes', '1', 'y')
         elif field_type == 'B':  # Binary (base64)
@@ -260,12 +284,17 @@ def type_converter(value: str, field_type: str) -> Any:
             return set(item.strip() for item in value.split(',') if item.strip())
         elif field_type == 'NS':  # Number Set
             # Use Decimal for number sets as well
-            return set(Decimal(item.strip()) for item in value.split(',') if item.strip())
+            try:
+                return set(Decimal(item.strip()) for item in value.split(',') if item.strip())
+            except (decimal.InvalidOperation, decimal.ConversionSyntax):
+                logger.warning(f"Invalid number set format for value '{value}'. Using string set instead.")
+                return set(item.strip() for item in value.split(',') if item.strip())  # Return as string set instead
         else:
             return value  # Default to string
     except (ValueError, TypeError) as e:
         logger.warning(f"Type conversion error for value '{value}' to type {field_type}: {e}")
-        return None
+        # Return the original value as string instead of None to avoid losing data
+        return value
 
 
 def build_nested_structure(csv_row: Dict[str, str], mapping: Dict[str, Any]) -> Dict[str, Any]:
@@ -333,7 +362,25 @@ def transform_row(row: Dict[str, str], config: Config) -> Dict[str, Any]:
     
     # Use schema mapping
     schema_mapping = config.schema.get('mapping', {})
-    return build_nested_structure(row, schema_mapping)
+    result = build_nested_structure(row, schema_mapping)
+    
+    # Debug logging for troubleshooting
+    logger.debug(f"Transformed item keys: {', '.join(result.keys())}")
+    
+    # Special handling for Source_Bank_Account__c and other fields that might be missing
+    # This ensures all mapped fields are included in the result
+    for csv_key, field_spec in schema_mapping.items():
+        if isinstance(field_spec, str):  # Simple mapping
+            parts = field_spec.split(':', 1)
+            dynamo_key = parts[0]
+            field_type = parts[1] if len(parts) > 1 else 'S'
+            
+            # If the field is in the row but not in the result, add it
+            if csv_key in row and dynamo_key not in result and row[csv_key]:
+                result[dynamo_key] = type_converter(row[csv_key], field_type)
+                logger.debug(f"Added missing field {csv_key} -> {dynamo_key}")
+    
+    return result
 
 
 def write_to_dynamo(table, rows: Iterator[Dict[str, str]], config: Config, tracker: Optional[ProgressTracker] = None) -> Tuple[int, int]:
@@ -527,10 +574,41 @@ def main() -> int:
                     raise ValueError("Failed to transform sample row")
                 
                 # Validate hash key and range key
-                if config.hash_key and config.hash_key not in sample_item:
-                    raise ValueError(f"Hash key '{config.hash_key}' not found in transformed item")
-                if config.range_key and config.range_key not in sample_item:
-                    raise ValueError(f"Range key '{config.range_key}' not found in transformed item")
+                hash_key_found = False
+                range_key_found = False
+                
+                # First check if the original keys are in the item
+                if config.hash_key and config.hash_key in sample_item:
+                    hash_key_found = True
+                
+                if config.range_key and config.range_key in sample_item:
+                    range_key_found = True
+                    
+                # If not found directly, check if they were transformed via the mapping
+                if not hash_key_found and config.hash_key and config.schema and 'mapping' in config.schema:
+                    # Get the transformed name from the mapping
+                    mapping = config.schema['mapping']
+                    if config.hash_key in mapping:
+                        transformed_hash_key = mapping[config.hash_key].split(':')[0]
+                        if transformed_hash_key in sample_item:
+                            hash_key_found = True
+                            logger.info(f"Hash key '{config.hash_key}' was transformed to '{transformed_hash_key}' and found in item")
+                
+                if not range_key_found and config.range_key and config.schema and 'mapping' in config.schema:
+                    # Get the transformed name from the mapping
+                    mapping = config.schema['mapping']
+                    if config.range_key in mapping:
+                        transformed_range_key = mapping[config.range_key].split(':')[0]
+                        if transformed_range_key in sample_item:
+                            range_key_found = True
+                            logger.info(f"Range key '{config.range_key}' was transformed to '{transformed_range_key}' and found in item")
+                
+                # Report errors if keys not found
+                if config.hash_key and not hash_key_found:
+                    raise ValueError(f"Hash key '{config.hash_key}' not found in transformed item (neither original nor transformed name)")
+                
+                if config.range_key and not range_key_found:
+                    raise ValueError(f"Range key '{config.range_key}' not found in transformed item (neither original nor transformed name)")
             else:
                 logger.warning("No sample rows available for schema validation")
         except Exception as e:

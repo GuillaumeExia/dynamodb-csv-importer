@@ -117,14 +117,62 @@ if ($SchemaFile) {
     Write-Host "Schema validation successful! Proceeding with import..."
 }
 
-# Split the large CSV file into chunks
-Write-Host "Splitting $InputFile into chunks of $ChunkSize rows each..."
+# Count total rows in the CSV file (excluding header)
+$totalRows = (Get-Content $InputFile).Count - 1  # Subtract 1 for header
+Write-Host "Total rows in CSV: $totalRows"
 
-$reader = [System.IO.File]::OpenText($InputFile)
-$header = $reader.ReadLine()
-$lineNumber = 0
-$fileNumber = 1
-$writer = $null
+# Calculate number of chunks
+$numChunks = [Math]::Ceiling($totalRows / $ChunkSize)
+Write-Host "Will create $numChunks chunks"
+
+# Check for existing chunks
+$existingChunks = @()
+if (Test-Path $chunksDir) {
+    $existingChunks = Get-ChildItem -Path $chunksDir -Filter "chunk_*.csv" | Select-Object -ExpandProperty Name
+    if ($existingChunks.Count -gt 0) {
+        Write-Host "Found $($existingChunks.Count) existing chunk files"
+    }
+}
+
+# Check if we need to create chunks
+if ($existingChunks.Count -eq $numChunks) {
+    Write-Host "All $numChunks chunks already exist. Skipping chunk creation."
+}
+else {
+    # Split the large CSV file into chunks
+    Write-Host "Splitting $InputFile into chunks of $ChunkSize rows each..."
+
+    # Read the header
+    $header = Get-Content $InputFile -TotalCount 1
+
+    # Create chunks
+    for ($i = 1; $i -le $numChunks; $i++) {
+        $chunkFile = Join-Path $chunksDir "chunk_$i.csv"
+        
+        # Skip if this chunk file already exists
+        if (Test-Path $chunkFile) {
+            Write-Host "Skipping chunk_$i.csv (file already exists)"
+            continue
+        }
+        
+        # Calculate start and end lines for this chunk
+        $startLine = (($i-1) * $ChunkSize) + 2  # +2 because line 1 is header and PowerShell is 1-indexed
+        $endLine = $startLine + $ChunkSize - 1
+        
+        # Make sure we don't exceed the file
+        if ($endLine -gt ($totalRows + 1)) {
+            $endLine = $totalRows + 1
+        }
+        
+        # Create the chunk file with header
+        $header | Set-Content $chunkFile
+        
+        # Add the data rows
+        Get-Content $InputFile | Select-Object -Index ($startLine-1)..($endLine-1) | Add-Content $chunkFile
+        
+        Write-Host "Created $chunkFile with rows $(($startLine-1))-$(($endLine-1))"
+    }
+}
 
 # Create tracking file for processed chunks
 $trackingFile = Join-Path $progressDir "batch_progress.json"
@@ -142,40 +190,8 @@ if (Test-Path $trackingFile) {
     }
 }
 
-try {
-    while ($null -ne ($line = $reader.ReadLine())) {
-        if ($lineNumber -eq 0) {
-            $chunkFile = Join-Path $chunksDir "chunk_$fileNumber.csv"
-            $writer = [System.IO.File]::CreateText($chunkFile)
-            $writer.WriteLine($header)
-            Write-Host "Creating chunk file: $chunkFile"
-        }
-        
-        $writer.WriteLine($line)
-        $lineNumber++
-        
-        if ($lineNumber -eq $ChunkSize) {
-            $writer.Close()
-            $fileNumber++
-            $lineNumber = 0
-        }
-    }
-    
-    # Close the last chunk file if it's not empty
-    if ($lineNumber -gt 0 -and $null -ne $writer) {
-        $writer.Close()
-    }
-}
-finally {
-    if ($null -ne $reader) {
-        $reader.Close()
-    }
-    if ($null -ne $writer -and $writer.BaseStream.CanWrite) {
-        $writer.Close()
-    }
-}
-
-Write-Host "Created $fileNumber chunk files in $chunksDir"
+# Get list of all chunk files
+$chunkFiles = Get-ChildItem -Path $chunksDir -Filter "chunk_*.csv" | Sort-Object Name
 
 # Start the monitor server in the background
 $monitorServerProcess = $null

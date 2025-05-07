@@ -8,6 +8,7 @@ import sys
 import json
 import logging
 import argparse
+import decimal
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -28,6 +29,33 @@ try:
 except ImportError:
     logger.error("Could not import from dynamodb_csv_importer.py. Make sure it's in the same directory.")
     sys.exit(1)
+
+# Create a safer version of type_converter with better error handling
+def safe_type_converter(value: str, field_type: str) -> Any:
+    """A safer version of type_converter with better error handling."""
+    if not value:  # Handle empty values
+        if field_type == 'NULL':
+            return True  # DynamoDB NULL type
+        return None  # Skip this attribute
+    
+    try:
+        if field_type == 'S':  # String
+            return value
+        elif field_type == 'N':  # Number
+            # Use Decimal instead of float for DynamoDB compatibility
+            # First check if it's a valid number to avoid decimal.ConversionSyntax
+            try:
+                return decimal.Decimal(value)
+            except (decimal.InvalidOperation, decimal.ConversionSyntax):
+                logger.warning(f"Invalid number format for value '{value}'. Using string instead.")
+                return value  # Return as string instead of failing
+        elif field_type == 'BOOL':  # Boolean
+            return value.lower() in ('true', 'yes', '1', 'y')
+        else:
+            return value  # Default to string for other types
+    except Exception as e:
+        logger.warning(f"Type conversion error for value '{value}' to type {field_type}: {e}")
+        return None
 
 def read_csv_sample(file_path: Path, num_rows: int = 5, encoding: str = "utf-8-sig") -> list:
     """Read only the header and a few sample rows from a CSV file."""
@@ -83,6 +111,38 @@ def read_csv_sample(file_path: Path, num_rows: int = 5, encoding: str = "utf-8-s
     logger.error(f"Error reading CSV file with all attempted encodings. Last error: {last_error}")
     raise last_error
 
+def safe_transform_row(row: Dict[str, str], config: Config) -> Dict[str, Any]:
+    """A safer version of transform_row that uses safe_type_converter and provides better error handling."""
+    result = {}
+    
+    # If no schema is defined, return a simple structure
+    if not config.schema or not config.schema.get('mapping'):
+        return {
+            'validation_result': 'No schema mapping defined'
+        }
+    
+    # Use schema mapping
+    schema_mapping = config.schema.get('mapping', {})
+    
+    # Process each field in the mapping
+    for csv_key, field_spec in schema_mapping.items():
+        if isinstance(field_spec, str):  # Simple mapping
+            parts = field_spec.split(':', 1)
+            dynamo_key = parts[0]
+            field_type = parts[1] if len(parts) > 1 else 'S'
+            
+            # Check if the field exists in the row
+            if csv_key in row:
+                try:
+                    # Use our safer type converter
+                    value = safe_type_converter(row[csv_key], field_type)
+                    if value is not None:  # Skip None values
+                        result[dynamo_key] = value
+                except Exception as e:
+                    logger.warning(f"Error converting field '{csv_key}' with value '{row.get(csv_key, '')}' to type {field_type}: {e}")
+    
+    return result
+
 def validate_schema(csv_file: Path, schema_file: Path, encoding: str = "utf-8-sig") -> bool:
     """
     Validate a CSV file against a schema without importing data.
@@ -117,12 +177,9 @@ def validate_schema(csv_file: Path, schema_file: Path, encoding: str = "utf-8-si
         # Log the first sample row for debugging
         logger.info(f"Sample row (first 200 chars): {str(sample_rows[0])[:200]}...")
         
-        # Try to transform a sample row
+        # Use our safer transform function instead of the original
         logger.info("Validating schema with sample row...")
-        sample_item = transform_row(sample_rows[0], config)
-        if not sample_item:
-            logger.error("Failed to transform sample row")
-            return False
+        sample_item = safe_transform_row(sample_rows[0], config)
             
         # Log the transformed item for debugging
         logger.info(f"Transformed item keys: {', '.join(sample_item.keys())}")

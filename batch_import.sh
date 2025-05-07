@@ -144,7 +144,7 @@ if [ -n "$SCHEMA_FILE" ]; then
         PYTHON_EXE="$PYTHON_PATH"
     else
         # Fall back to system Python if venv not found
-        PYTHON_EXE="python3"
+        PYTHON_EXE="python"
     fi
     
     VALIDATE_SCRIPT="$SCRIPT_DIR/validate_schema.py"
@@ -171,6 +171,7 @@ fi
 # Tracking file for processed chunks
 TRACKING_FILE="$PROGRESS_DIR/batch_progress.json"
 PROCESSED_CHUNKS=()
+EXISTING_CHUNKS=()
 
 # Load tracking data if it exists
 if [ -f "$TRACKING_FILE" ]; then
@@ -186,36 +187,59 @@ if [ -f "$TRACKING_FILE" ]; then
     fi
 fi
 
-# Split the large CSV file into chunks
-echo "Splitting $INPUT_FILE into chunks of $CHUNK_SIZE rows each..."
-
-# Get the header
-HEADER=$(head -n 1 "$INPUT_FILE")
-
-# Split the file
-LINE_COUNT=0
-FILE_NUMBER=1
-CHUNK_FILE="$CHUNKS_DIR/chunk_$FILE_NUMBER.csv"
-
-# Write header to first chunk file
-echo "$HEADER" > "$CHUNK_FILE"
-echo "Creating chunk file: $CHUNK_FILE"
-
-# Process the file line by line, skipping the header
-tail -n +2 "$INPUT_FILE" | while IFS= read -r LINE; do
-    echo "$LINE" >> "$CHUNK_FILE"
-    LINE_COUNT=$((LINE_COUNT + 1))
-    
-    if [ $LINE_COUNT -eq $CHUNK_SIZE ]; then
-        FILE_NUMBER=$((FILE_NUMBER + 1))
-        CHUNK_FILE="$CHUNKS_DIR/chunk_$FILE_NUMBER.csv"
-        echo "Creating chunk file: $CHUNK_FILE"
-        echo "$HEADER" > "$CHUNK_FILE"
-        LINE_COUNT=0
+# Check for existing chunks
+if [ -d "$CHUNKS_DIR" ]; then
+    EXISTING_CHUNKS=($(find "$CHUNKS_DIR" -name "chunk_*.csv" -type f -printf "%f\n" 2>/dev/null))
+    if [ ${#EXISTING_CHUNKS[@]} -gt 0 ]; then
+        echo "Found ${#EXISTING_CHUNKS[@]} existing chunk files"
     fi
-done
+fi
 
-echo "Created $FILE_NUMBER chunk files in $CHUNKS_DIR"
+# Count total rows in the CSV file (excluding header)
+TOTAL_ROWS=$(wc -l < "$INPUT_FILE")
+TOTAL_ROWS=$((TOTAL_ROWS - 1))  # Subtract 1 for header
+echo "Total rows in CSV: $TOTAL_ROWS"
+
+# Calculate number of chunks
+NUM_CHUNKS=$(( (TOTAL_ROWS + CHUNK_SIZE - 1) / CHUNK_SIZE ))
+echo "Will create $NUM_CHUNKS chunks"
+
+# Check if we need to create chunks
+if [ ${#EXISTING_CHUNKS[@]} -eq $NUM_CHUNKS ]; then
+    echo "All $NUM_CHUNKS chunks already exist. Skipping chunk creation."
+else
+    # Split the large CSV file into chunks
+    echo "Splitting $INPUT_FILE into chunks of $CHUNK_SIZE rows each..."
+    
+    # Create chunks
+    HEADER=$(head -n 1 "$INPUT_FILE")
+    for ((i=1; i<=NUM_CHUNKS; i++)); do
+        CHUNK_FILE="$CHUNKS_DIR/chunk_$i.csv"
+        
+        # Skip if this chunk file already exists
+        if [ -f "$CHUNK_FILE" ]; then
+            echo "Skipping chunk_$i.csv (file already exists)"
+            continue
+        fi
+        
+        # Calculate start and end lines for this chunk
+        START_LINE=$(( (i-1) * CHUNK_SIZE + 2 ))  # +2 because line 1 is header and we want to start from the next line
+        END_LINE=$(( START_LINE + CHUNK_SIZE - 1 ))
+        
+        # Make sure we don't exceed the file
+        if [ $END_LINE -gt $((TOTAL_ROWS + 1)) ]; then
+            END_LINE=$((TOTAL_ROWS + 1))
+        fi
+        
+        # Create the chunk file with header
+        echo "$HEADER" > "$CHUNK_FILE"
+        
+        # Add the data rows
+        sed -n "${START_LINE},${END_LINE}p" "$INPUT_FILE" >> "$CHUNK_FILE"
+        
+        echo "Created $CHUNK_FILE with rows $((START_LINE-1))-$((END_LINE-1))"
+    done
+fi
 
 # Start the monitor server in the background
 MONITOR_SERVER_PID=""
@@ -228,7 +252,7 @@ if [ "$NO_MONITOR" = false ]; then
         PYTHON_EXE="$PYTHON_PATH"
     else
         # Fall back to system Python if venv not found
-        PYTHON_EXE="python3"
+        PYTHON_EXE="python"
     fi
     
     MONITOR_SCRIPT="$SCRIPT_DIR/monitor_server.py"
@@ -292,7 +316,7 @@ for CHUNK in "${CHUNKS[@]}"; do
         PYTHON_EXE="$SCRIPT_DIR/venv/bin/python"
     else
         # Fall back to system Python if venv not found
-        PYTHON_EXE="python3"
+        PYTHON_EXE="python"
     fi
     
     COMMAND="$PYTHON_EXE ${ARGS[@]}"
