@@ -64,6 +64,7 @@ class Config:
     hash_key: str = ""
     range_key: Optional[str] = None
     batch_size: int = 25
+    encoding: str = "utf-8-sig"  # Default encoding with BOM handling
     max_workers: int = 10
     region: Optional[str] = None
     profile: Optional[str] = None
@@ -85,7 +86,8 @@ def parse_arguments() -> Config:
     parser.add_argument("--profile", help="AWS profile name")
     parser.add_argument("--job-id", help="Custom job ID for progress tracking")
     parser.add_argument("--no-monitor", action="store_true", help="Disable progress monitoring")
-
+    parser.add_argument("--encoding", default="utf-8-sig", help="CSV file encoding (default: utf-8-sig, will fallback to latin-1 if needed)")
+    
     args = parser.parse_args()
     
     # Validate file exists
@@ -100,6 +102,7 @@ def parse_arguments() -> Config:
         max_workers=args.workers,
         region=args.region,
         profile=args.profile,
+        encoding=args.encoding,
     )
     
     # Load schema if provided
@@ -161,38 +164,54 @@ def get_dynamodb_resource(config: Config) -> boto3.resource:
     return session.resource("dynamodb", config=boto_config)
 
 
-def read_csv_data(file_path: Path) -> Iterator[Dict[str, str]]:
+def read_csv_data(file_path: Path, encoding: str = "utf-8-sig") -> Iterator[Dict[str, str]]:
     """Read data from a CSV file."""
-    try:
-        with open(file_path, 'r', newline='', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            
-            # Normalize fieldnames to handle BOM and other encoding issues
-            if reader.fieldnames:
-                # Log original headers for debugging
-                logger.info(f"Original CSV headers: {', '.join(reader.fieldnames)}")
+    encodings_to_try = [encoding, "latin-1", "cp1252", "iso-8859-1"]
+    last_error = None
+    
+    # Try different encodings until one works
+    for enc in encodings_to_try:
+        try:
+            with open(file_path, 'r', newline='', encoding=enc) as f:
+                reader = csv.DictReader(f)
                 
-                # Create a normalized version of the CSV data with clean keys
-                for row in reader:
-                    # Preserve the original data but ensure we can access it with clean keys
-                    normalized_row = {}
-                    for key, value in row.items():
-                        # Keep original key-value pair
-                        normalized_row[key] = value
-                        
-                        # Also add a normalized version if different
-                        clean_key = key
-                        # Remove BOM if present
-                        if clean_key.startswith('\ufeff'):
-                            clean_key = clean_key[1:]
-                            normalized_row[clean_key] = value
+                # Normalize fieldnames to handle BOM and other encoding issues
+                if reader.fieldnames:
+                    # Log original headers for debugging
+                    logger.info(f"Original CSV headers: {', '.join(reader.fieldnames)}")
+                    logger.info(f"Successfully opened CSV with encoding: {enc}")
                     
-                    yield normalized_row
-            else:
-                logger.warning("CSV file has no headers")
-    except (IOError, csv.Error) as e:
-        logger.error(f"Error reading CSV file: {e}")
-        raise
+                    # Create a normalized version of the CSV data with clean keys
+                    for row in reader:
+                        # Preserve the original data but ensure we can access it with clean keys
+                        normalized_row = {}
+                        for key, value in row.items():
+                            # Keep original key-value pair
+                            normalized_row[key] = value
+                            
+                            # Also add a normalized version if different
+                            clean_key = key
+                            # Remove BOM if present
+                            if clean_key.startswith('\ufeff'):
+                                clean_key = clean_key[1:]
+                                normalized_row[clean_key] = value
+                        
+                        yield normalized_row
+                    return  # Successfully read the file, exit the function
+                else:
+                    logger.warning("CSV file has no headers")
+                    return
+        except (UnicodeDecodeError, IOError) as e:
+            last_error = e
+            logger.debug(f"Failed to open CSV with encoding {enc}: {e}")
+            continue  # Try the next encoding
+        except csv.Error as e:
+            logger.error(f"CSV parsing error: {e}")
+            raise
+    
+    # If we get here, all encodings failed
+    logger.error(f"Error reading CSV file with all attempted encodings. Last error: {last_error}")
+    raise last_error
 
 
 def process_batch(table, items: List[Dict[str, Any]]) -> Tuple[int, int]:
@@ -415,10 +434,10 @@ def main() -> int:
         logger.info(f"Starting import to table '{config.table_name}' from {config.csv_file}")
         
         # Initialize progress tracking
-        if config.monitor:
+        if not getattr(config, 'no_monitor', False):
             try:
                 # Count total rows for progress tracking
-                total_items = count_csv_rows(config.csv_file)
+                total_items = count_csv_rows(config.csv_file, encoding=config.encoding)
                 logger.info(f"CSV file contains {total_items} rows (excluding header)")
                 
                 # Initialize progress tracker
@@ -426,7 +445,7 @@ def main() -> int:
                     table_name=config.table_name,
                     file_path=config.csv_file,
                     total_items=total_items,
-                    job_id=config.job_id
+                    job_id=getattr(config, 'job_id', None)
                 )
                 logger.info(f"Progress monitoring enabled. Job ID: {tracker.job_id}")
                 logger.info(f"Monitor your import at: http://localhost:5000")
@@ -496,16 +515,24 @@ def main() -> int:
         if config.range_key:
             logger.info(f"Range key: {config.range_key}")
         
-        rows = read_csv_data(config.csv_file)
+        rows = read_csv_data(config.csv_file, encoding=config.encoding)
         
         # Process a sample row to validate schema before full import
         try:
-            sample_rows = list(read_csv_data(config.csv_file))
+            sample_rows = list(read_csv_data(config.csv_file, encoding=config.encoding))
             if sample_rows:
                 logger.info("Validating schema with sample row...")
-                transform_row(sample_rows[0], config)
-                # Reset the iterator
-                rows = read_csv_data(config.csv_file)
+                sample_item = transform_row(sample_rows[0], config)
+                if not sample_item:
+                    raise ValueError("Failed to transform sample row")
+                
+                # Validate hash key and range key
+                if config.hash_key and config.hash_key not in sample_item:
+                    raise ValueError(f"Hash key '{config.hash_key}' not found in transformed item")
+                if config.range_key and config.range_key not in sample_item:
+                    raise ValueError(f"Range key '{config.range_key}' not found in transformed item")
+            else:
+                logger.warning("No sample rows available for schema validation")
         except Exception as e:
             logger.error(f"Schema validation failed with sample row: {e}")
             if tracker:
