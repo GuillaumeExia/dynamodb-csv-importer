@@ -120,12 +120,44 @@ def validate_schema(csv_file: Path, schema_file: Path, encoding: str = "utf-8-si
             return False
         
         # Validate hash key and range key
-        if config.hash_key and config.hash_key not in sample_item:
-            logger.error(f"Hash key '{config.hash_key}' not found in transformed item")
+        # We need to check if the hash key and range key are in the transformed item
+        # But we need to account for the fact that they might have been renamed in the mapping
+        hash_key_found = False
+        range_key_found = False
+        
+        # First check if the original keys are in the item
+        if config.hash_key and config.hash_key in sample_item:
+            hash_key_found = True
+        
+        if config.range_key and config.range_key in sample_item:
+            range_key_found = True
+            
+        # If not found directly, check if they were transformed via the mapping
+        if not hash_key_found and config.hash_key and config.schema and 'mapping' in config.schema:
+            # Get the transformed name from the mapping
+            mapping = config.schema['mapping']
+            if config.hash_key in mapping:
+                transformed_hash_key = mapping[config.hash_key].split(':')[0]
+                if transformed_hash_key in sample_item:
+                    hash_key_found = True
+                    logger.info(f"Hash key '{config.hash_key}' was transformed to '{transformed_hash_key}' and found in item")
+        
+        if not range_key_found and config.range_key and config.schema and 'mapping' in config.schema:
+            # Get the transformed name from the mapping
+            mapping = config.schema['mapping']
+            if config.range_key in mapping:
+                transformed_range_key = mapping[config.range_key].split(':')[0]
+                if transformed_range_key in sample_item:
+                    range_key_found = True
+                    logger.info(f"Range key '{config.range_key}' was transformed to '{transformed_range_key}' and found in item")
+        
+        # Report errors if keys not found
+        if config.hash_key and not hash_key_found:
+            logger.error(f"Hash key '{config.hash_key}' not found in transformed item (neither original nor transformed name)")
             return False
         
-        if config.range_key and config.range_key not in sample_item:
-            logger.error(f"Range key '{config.range_key}' not found in transformed item")
+        if config.range_key and not range_key_found:
+            logger.error(f"Range key '{config.range_key}' not found in transformed item (neither original nor transformed name)")
             return False
         
         # If we get here, validation passed
