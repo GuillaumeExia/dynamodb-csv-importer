@@ -219,7 +219,11 @@ if (-not $NoMonitor) {
 }
 
 # Process each chunk
-$chunks = Get-ChildItem -Path $chunksDir -Filter "chunk_*.csv" | Sort-Object Name
+# Sort chunks numerically by extracting the number from chunk_N.csv and sorting
+$chunks = Get-ChildItem -Path $chunksDir -Filter "chunk_*.csv" | Sort-Object { 
+    # Extract the numeric part from chunk_N.csv and convert to integer for proper numeric sorting
+    [int]($_.Name -replace 'chunk_([0-9]+)\.csv', '$1')
+}
 $totalChunks = $chunks.Count
 $currentChunk = 0
 

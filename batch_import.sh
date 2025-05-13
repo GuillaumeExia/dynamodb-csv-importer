@@ -272,7 +272,8 @@ if [ "$NO_MONITOR" = false ]; then
 fi
 
 # Process each chunk
-CHUNKS=($(ls -1 "$CHUNKS_DIR"/chunk_*.csv | sort))
+# Sort chunks numerically by extracting the number from chunk_N.csv and sorting
+CHUNKS=($(ls -1 "$CHUNKS_DIR"/chunk_*.csv | sort -V))
 TOTAL_CHUNKS=${#CHUNKS[@]}
 CURRENT_CHUNK=0
 
