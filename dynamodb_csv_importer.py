@@ -39,15 +39,26 @@ except ImportError:
 
 # Define count_csv_rows function with encoding support
 def count_csv_rows(file_path: Path, encoding: str = 'utf-8-sig') -> int:
-    """Count the number of rows in a CSV file (excluding header)."""
+    """
+    Count the number of rows in a CSV file (excluding header).
+    Handles null bytes (ASCII 0, \0) by filtering them out.
+    """
     encodings_to_try = [encoding, 'utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
     last_error = None
     
     for enc in encodings_to_try:
         try:
-            with open(file_path, 'r', newline='', encoding=enc) as f:
-                # Count lines and subtract 1 for header
-                return sum(1 for _ in f) - 1
+            # Read in binary mode to handle null bytes
+            with open(file_path, 'rb') as f:
+                # Read content and replace null bytes
+                content = f.read()
+                content = content.replace(b'\x00', b'')
+                
+                # Convert to string and count lines
+                text_content = content.decode(enc)
+                lines = text_content.splitlines()
+                # Subtract 1 for header
+                return len(lines) - 1
         except UnicodeDecodeError as e:
             last_error = e
             continue
@@ -185,15 +196,28 @@ def get_dynamodb_resource(config: Config) -> boto3.resource:
 
 
 def read_csv_data(file_path: Path, encoding: str = "utf-8-sig") -> Iterator[Dict[str, str]]:
-    """Read data from a CSV file."""
+    """
+    Read data from a CSV file.
+    Handles null bytes (ASCII 0, \0) by filtering them out.
+    """
     encodings_to_try = [encoding, "latin-1", "cp1252", "iso-8859-1"]
     last_error = None
     
     # Try different encodings until one works
     for enc in encodings_to_try:
         try:
-            with open(file_path, 'r', newline='', encoding=enc) as f:
-                reader = csv.DictReader(f)
+            # First try to read with binary mode to handle null bytes
+            with open(file_path, 'rb') as f_binary:
+                # Read the file content and replace null bytes
+                content = f_binary.read()
+                # Replace null bytes with empty string
+                content = content.replace(b'\x00', b'')
+                
+                # Create a text stream from the modified binary content
+                import io
+                text_stream = io.StringIO(content.decode(enc))
+                
+                reader = csv.DictReader(text_stream)
                 
                 # Normalize fieldnames to handle BOM and other encoding issues
                 if reader.fieldnames:

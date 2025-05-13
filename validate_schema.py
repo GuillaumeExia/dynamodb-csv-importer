@@ -58,8 +58,12 @@ def safe_type_converter(value: str, field_type: str) -> Any:
         return None
 
 def read_csv_sample(file_path: Path, num_rows: int = 5, encoding: str = "utf-8-sig") -> list:
-    """Read only the header and a few sample rows from a CSV file."""
+    """
+    Read only the header and a few sample rows from a CSV file.
+    Handles null bytes (ASCII 0, \0) by filtering them out.
+    """
     import csv
+    import io
     
     encodings_to_try = [encoding, "latin-1", "cp1252", "iso-8859-1"]
     last_error = None
@@ -67,8 +71,17 @@ def read_csv_sample(file_path: Path, num_rows: int = 5, encoding: str = "utf-8-s
     for enc in encodings_to_try:
         try:
             sample_rows = []
-            with open(file_path, 'r', newline='', encoding=enc) as f:
-                reader = csv.DictReader(f)
+            
+            # Read in binary mode to handle null bytes
+            with open(file_path, 'rb') as f_binary:
+                # Read the file content and replace null bytes
+                content = f_binary.read()
+                # Replace null bytes with empty string
+                content = content.replace(b'\x00', b'')
+                
+                # Create a text stream from the modified binary content
+                text_stream = io.StringIO(content.decode(enc))
+                reader = csv.DictReader(text_stream)
                 
                 if not reader.fieldnames:
                     logger.warning("CSV file has no headers")
